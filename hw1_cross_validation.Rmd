@@ -1,0 +1,90 @@
+---
+title: "Stat 503 HW1 "
+author: "Johanna Krogh"
+date: "Due Thursday, April 6, 2017 at 6:30 pm"
+output: html_document
+---
+
+
+```{r eval = FALSE, echo = FALSE}
+#Problem 1: Coding a Regression CV Routine
+#code for mycv1 function
+
+mycv1 <- function(formula, data, modfun=lm, cvgroups){
+  pred <- rep(NA, dim(data)[1])
+  for (i in unique(cvgroups) ){
+    fittedmod <- modfun(formula, data = data[(cvgroups != i),])#fitted model
+  pred[cvgroups==i] <- predict(fittedmod, newdata = data[cvgroups==i,]) #predicting on the ith group 
+    
+  }
+  
+  pred #output
+}
+
+```
+
+
+## Problem 2: Test Your CV Function
+
+I plotted the caret:train predictions against the predictions from the function written in part 1, with the line y=x on top. Good news, the function we wrote in part 1 works just as well as the train function! 
+
+```{r echo=FALSE, message = FALSE, warning = FALSE}
+#output using caret:train
+
+library(caret)
+source("constrainedSubsets.r")
+myseed <- as.list(sample.int(1000, 11))
+abalone <- read.csv("abaloneTrain.csv")
+abalone <- abalone[-which.max(abalone$height),]
+abAvoid=list(c('allweight','gutweight'),c('allweight','width'))
+abTerms=c(names(abalone)[c(1,3:5,7:8)],paste('sex',c('height','width','allweight','shellweight'),sep=':'))
+
+cvControl <- trainControl( method ='cv',number = 10,seeds=myseed)
+## 10-fold CV with the same random #'s each time
+abModels <- conSubsets(abalone,'rings',abTerms,avoid=abAvoid,forced='sex',verbose=FALSE)
+
+abModels$rmse <- rep(NA,dim(abModels)[1])
+for (a in 1:dim(abModels)[1])
+{
+	tmp=train(as.formula(abModels$model[a]),data=abalone,method="lm",trControl=cvControl)
+	abModels$rmse[a]=tmp$results$RMSE}
+abModels <- abModels[order(abModels$rmse),]
+
+
+cvControl$savePredictions=TRUE
+
+bestFit <- train(as.formula(abModels$model[which.min(abModels$rmse)]), data=abalone,method="lm",trControl=cvControl)
+
+
+	
+
+```
+
+
+```{r echo=FALSE, message = FALSE, warning = FALSE}
+#output using mycv1
+
+abalone <- abalone[bestFit$pred$rowIndex,]
+#repeat code to evaluate
+mycv1 <- function(formula, data, modfun=lm, cvgroups){
+  pred <- rep(NA, dim(data)[1])
+  for (i in unique(cvgroups) ){
+    fittedmod <- modfun(formula, data = data[(cvgroups != i),])#fitted model
+  pred[cvgroups==i] <- predict(fittedmod, newdata = data[cvgroups==i,]) #predicting on the ith group 
+    
+  }
+  
+  pred #output
+}
+  
+mycv12 <- mycv1(formula=abModels$model[which.min(abModels$rmse)], data=abalone, modfun=lm, cvgroups=bestFit$pred$Resample)
+
+```
+
+
+```{r echo = FALSE}
+plot(bestFit$pred$pred, mycv12, main = "Caret::Train vs. My CV Function", xlab = "Caret:Train Prediction", ylab="My CV Function Prediction")
+abline(a=0, b=1)
+
+```
+
