@@ -1,0 +1,124 @@
+---
+title: "Homework 5 StatR 503"
+author: "Johanna Krogh"
+date: "Due May 29, 2017"
+output: html_document
+---
+
+```{r message=FALSE, warning=FALSE}
+library(fields)
+require(plyr) 
+require(maps)
+library(nlme)
+data(ozone, package="plyr")
+lat <- as.numeric(dimnames(ozone)$lat)
+long <- as.numeric(dimnames(ozone)$long)
+time <- as.numeric(dimnames(ozone)$time)
+
+```
+
+##Problem 1: Geography
+```{r}
+
+image.plot(long, lat, ozone[,,10], col=heat.colors(100))
+map("world", add=TRUE, lwd=2, col="darkred")
+
+TS.PR <- ozone[20,17,]
+TS.PC <- ozone[15, 13,]
+TS.G <- ozone[10,9,]
+
+TS <- ts(cbind(TS.PR, TS.PC, TS.G), frequency = 12, start = 1995, end = 2001-1/12)
+plot(TS)
+
+```
+
+##Problem 2: Decomposition using Galapagos Islands
+```{r}
+TS.G1 <- ts(TS.G, frequency = 12, start = 1995, end = 2001-1/12)
+dec.TS.G1 <- decompose(TS.G1, "additive")
+plot(dec.TS.G1)
+
+```
+
+The season peaks and troughs are in summer and winter, respectively. The net trend is difficult to interpret. There is a significant negative regression against time from 1995 to 1998. After 1998 the trend turns positive, but then looks like it is turning negative after 2001. Similar to the seasonal peaks, but spaced about between 3 years instead of months. 
+
+##Problem 3: Autocorrelation and ARMA model
+
+```{r}
+dec.TS.G1$random <- dec.TS.G1$random[complete.cases(dec.TS.G1$random)]
+acf(dec.TS.G1$random)
+
+```
+
+
+```{r}
+Y <- dec.TS.G1$random
+
+get.aic.table <- function(Y){
+aic.table <- AIC(
+  arima(Y, c(1,0,0)), arima(Y, c(0,0,1)), arima(Y, c(1,0,1)), arima(Y, c(2,0,0)), arima(Y, c(0,0,2)), 
+  arima(Y, c(1,0,2)),  arima(Y, c(2,0,1)), arima(Y, c(2,0,2)), arima(Y, c(3,0,2)), arima(Y, c(3,0,3)))
+aic.table[order(aic.table$AIC),]
+}
+
+get.aic.table(Y)
+
+```
+
+```{r}
+arima(Y, c(2, 0, 1))
+
+```
+
+##Problem 4: Modeling the Trend
+Between the simple linear model and the generalized least squares model: the intercepts are very close. If we were rounding they would be the exact same. The slopes are also very similar. They are both very small, and just barely positive. Again if we were rounding they would be the same - basically zero!
+```{r}
+
+TS.G1.deseasoned<- TS.G1-dec.TS.G1$seasonal#part A
+TS.G1.lm<- lm(TS.G1.deseasoned ~ time)#part B
+TS.G1.lm
+
+ar(TS.G1.lm$res)#correlation order
+
+TS.G1.gls <- gls(TS.G1.deseasoned~time, correlation = corARMA(p=1))#part C
+TS.G1.gls
+
+```
+
+##Problem 5: Cross-correlations
+All 3 locations follow a very similar frequency. The Panama Canal and Galapagos Islands time series plots are also similar, relative to the Puerto Rico time series. However the distance between the peaks and troughs all look to be similar. Puerto Rico is shifted up slightly compared to the other two. This means Puerto Rico has a higher baseline for ozone measurement. Why? Notice: The Galapagos, further south on the map, has the lowest ozone measurement; the Panama Canal, in the "middle" of our 3 locations, has a slightly higher baseline than the Galapagos; and Puerto Rico, the furthest north, has the highest ozone measurements. If we were to look at locations below the equator, how low would their measurements be?
+```{r}
+ts.plot(TS,gpars= list(col=rainbow(3)))
+legend("topleft", c("Puerto Rico", "Panama Canal", "Galapagos Islands"),col=c("red", "green", "blue"), lty=1)
+
+```
+
+###CCF function
+```{r}
+TS.PR1 <- ts(TS.PR, frequency = 12, start = 1995, end = 2001-1/12)
+TS.PC1 <- ts(TS.PC, frequency = 12, start = 1995, end = 2001-1/12)
+```
+
+
+###Puerto Rico & Panama Canal:
+There is a strong correlation every six months. Does a lower/higher ozone measurement in Puerto Rico mean there will be a lower/higher ozone measurement in the Panama Cancel? This inference can be taken to the other two ccf plots. All three plots are almost identical, unsurprisingly, considering where they are located and how their seasons match up.
+```{r}
+ccf(TS.PR1, TS.PC1)
+```
+
+
+###Puerto Rico & Galapagos Islands:
+```{r}
+ccf(TS.PR1, TS.G1)
+
+```
+
+
+###Panama Canal & Galapagos Islands:
+```{r}
+ccf(TS.PC1, TS.G1)
+```
+
+
+
+

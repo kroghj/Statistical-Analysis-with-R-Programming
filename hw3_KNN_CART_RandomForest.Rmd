@@ -1,0 +1,321 @@
+---
+title: "Homework 3"
+author: "Johanna Krogh"
+date: "Due May 8, 2017"
+output: html_document
+---
+
+
+```{r message = FALSE, warning = FALSE}
+setwd("~/UW_1/Spring 17")
+library(ISLR)
+library(glmnet)
+library(psych)
+library(kknn)
+library(rpart)
+library(NeuralNetTools)
+library(ggplot2)
+library(randomForest)
+library(doParallel)
+library(magrittr)
+source("classificationMetrics.r")
+source("mycv2.r")
+
+```
+
+##Problem 1: Inverse-Prevalence Error Metric
+
+See attached photo of proof. 
+
+##Problem 2: KNN Classification
+
+###Part A: Explore the Data
+```{r}
+wdbcTrain <- read.csv("wdbcTrain.csv")
+wdbcTest <- read.csv("wdbcTest.csv")
+pairs.panels(wdbcTrain[,2:15], ellipses= FALSE, scale=TRUE)
+pairs.panels(wdbcTrain[,16:31], ellipses = FALSE, scale = TRUE)
+```
+
+In exploring the data I found no missing values. I found comparing the 'mean' of the data to be the most interpretable. The pairs.panels shows a (not surprising) strong correlation between radius, perimeter, and area. Compactness, concavity, and number of concave points were also strongly correlated with each other. I don't know much about features of cells, so one correlation I found interesting was that a large radius corresponds to a larger number of concave points.
+
+### Part B: Tune KNN
+```{r}
+set.seed(1019)
+kay <- seq(1,15,2)
+ntrain <- dim(wdbcTrain)[1]
+
+wdbcKNN<- train.kknn(diagnosis~., data=wdbcTrain, ks = kay, kernel=c("rectangular","triangular","optimal"))
+
+errcounts <- ntrain*t(wdbcKNN$MISCLASS)
+bestind <- max(which(errcounts==min(errcounts)))
+
+
+```
+
+```{r}
+plot(wdbcKNN)
+
+```
+
+### Confusion Matrix
+
+```{r}
+table(wdbcTrain$diagnosis,wdbcKNN$fitted.values[[bestind]])
+
+```
+Sensitivity: `r 270/(270+4)`
+Specificity: `r 150/(150+12)`
+
+### Part C: Heavy Penalty
+```{r}
+
+wdbcKsummary <- data.frame(k=sapply(wdbcKNN$fitted.values,function (x) attributes(x)$k), kernel=sapply(wdbcKNN$fitted.values,function (x) attributes(x)$kernel))
+
+ws <- numeric(24)
+
+for (i in 1:24){
+score<- weightedScore(wdbcKNN$fitted.values[[i]], wdbcTrain$diagnosis, c(1, 10))
+ws[i] <- score
+  
+}
+
+wdbcWeightedScore <- cbind(wdbcKsummary, ws)  
+bestindws <- which.min(wdbcWeightedScore[,3])#indices = 20. k = 7 kernel = optimal, ws = 0.05596621
+
+```
+
+###Plot tuning curve
+
+```{r}
+ggplot(wdbcWeightedScore, aes(x= k, y = ws, color = kernel) ) + geom_point(alpha = 0.6)
+
+```
+
+###Confusion Matrix
+
+```{r}
+table(wdbcTrain$diagnosis,wdbcKNN$fitted.values[[bestindws]])
+
+```
+Sensitivity = `r 268/(268+6)`
+Specificity = `r 152/(152+10)`
+
+###Part D: Predict
+
+###Predict with Part B
+
+```{r}
+#Part B
+wdbc.kpreds <- kknn(diagnosis~.,train=wdbcTrain,test=wdbcTest, k=15,kernel='triangular')
+### Confusion matrix for the test predictions:
+table(wdbcTest$diagnosis,wdbc.kpreds$fitted)
+flatErr(wdbcKNN$fitted.values[23], wdbcTrain$diagnosis)
+```
+Sensitivity = `r 83/83`
+Specificity = `r 47/(47+3)`
+Positive Predictive Value = `r 83/(83+3)`
+Flat Error: `r flatErr(wdbcKNN$fitted.values[23][[1]], wdbcTrain$diagnosis)`
+
+The sensitivity is as good as we can ask for. The specificity is also pretty high, but depending on the diease a 6% chance that the test is incorrect, especially if it's a rare disease, could be a lot. 
+
+###Predict with Part C
+```{r}
+#Part C
+wdbc.wspreds <- kknn(diagnosis~.,train=wdbcTrain,test=wdbcTest, k=7,kernel='optimal')
+### Confusion matrix for the test predictions:
+table(wdbcTest$diagnosis,wdbc.wspreds$fitted)
+```
+Sensitivity = `r 82/(82+1)`
+Specificity = `r 48/(48+2)`
+Positive Predictive Value = `r 82/(82+2)`
+Flat Error: `r flatErr(wdbcKNN$fitted.values[20][[1]], wdbcTrain$diagnosis)`
+
+The sensitivity is almost as high as it can be. Interesting that it's also not at 100% given the new weighted scores. The Specificity is higher, thanks to the new weights? The flat errors are the same in both cases. The proportion of times that we have an error is the exact same. Why is that? 
+
+##Problem 3: Single-Tree (CART) Classification
+
+###Part A
+```{r}
+wdbcid <- sample(10, 436, replace = TRUE)
+
+tuneCps <- 0.1^seq(1,5,0.5)  # The Cp values we'll examine
+n <- dim(wdbcTrain)[1] 
+k <- length(tuneCps)
+vinecv1 <- matrix(NA,nrow=n,ncol=k)
+
+for (a in 1:k)  # Looping over the Cp values
+	vinecv1[,a] <- mycv2(diagnosis~.,data=wdbcTrain, FUN=rpart,cvid=wdbcid,cp=tuneCps[a],predtype='class')
+
+```
+
+### CV results: 0-1 Error rates as a function of Cp
+```{r}
+
+plot(tuneCps, vinecv1 %>% apply(2,function(x,ref) mean(x!=ref),ref=as.integer(wdbcTrain$diagnosis)) %>% round(3), xlab = "Cp", ylab = "Flat Error Rate")
+
+fe <- vinecv1 %>% apply(2, function(x,ref) mean(x!=ref), ref=as.integer(wdbcTrain$diagnosis))
+bestfe <- which.min(fe)
+
+table(wdbcTrain$diagnosis,vinecv1[,bestfe]) # Confusion Matrix
+
+```
+
+###Part B:Heavy Penalty
+```{r}
+
+wdbctree2 <- rpart(diagnosis~.,data=wdbcTrain,control=list(cp
+=0.01), parms = list( loss= matrix( c(0,1,10,0), nrow=2)))
+
+table(wdbcTrain$diagnosis,predict(wdbctree2, type = "class")) 
+    
+
+```
+
+###Part C
+```{r}
+wdbcid <- sample(10, 436, replace = TRUE)
+
+tuneCps <- 0.1^seq(1,5,0.5) 
+n <- dim(wdbcTrain)[1] 
+k <- length(tuneCps)
+vinecv2 <- matrix(NA,nrow=n,ncol=k)
+
+for (a in 1:k)  # Looping over the Cp values
+	vinecv2[,a] <- mycv2(diagnosis~.,data=wdbcTrain, FUN=rpart,cvid=wdbcid,cp=tuneCps[a],predtype='class', parms = list( loss= matrix( c(0,1,10,0), nrow=2)))
+
+plot(tuneCps, vinecv2 %>% apply(2,function(x,ref) mean(x!=ref),ref=as.integer(wdbcTrain$diagnosis)) %>% round(3), xlab = "Cp", ylab = "Flat Error Rate") #now best cp=0.03162278
+
+fe2 <- vinecv2 %>% apply(2, function(x,ref) mean(x!=ref), ref=as.integer(wdbcTrain$diagnosis))
+bestfe2 <- which.min(fe2)
+
+table(wdbcTrain$diagnosis,vinecv2[,bestfe2])
+
+```
+
+###10:1 Score Based on Part A
+```{r}
+
+ws2 <- numeric(9)
+for (i in 1:9){
+score<- weightedScore(vinecv1[,i] , as.integer(wdbcTrain$diagnosis), c(1, 10))
+ws2[i] <- score
+  
+}
+
+plot(tuneCps, ws2, xlab = "Cp", ylab = "Weighted score", main = "Penalty added after the fact")
+
+```
+
+###Part D: Predicting
+
+#### CP = 0.01
+```{r}
+#cp=0.01
+wdbcpred1 <- rpart(diagnosis~.,data=wdbcTest,control=list(cp
+=0.01))
+
+table(wdbcTest$diagnosis, predict(wdbcpred1, type = "class"))
+flatErr(predict(wdbcpred1, type = "class"), wdbcTest$diagnosis)
+
+```
+Sensitivity: `r 79/(79+4)`
+Specificity: `r 50/50`
+Positive-Predictive Value: `r 79/79`
+Flat Error = `r flatErr(predict(wdbcpred1, type = "class"), wdbcTest$diagnosis)`
+
+
+#### CP = 0.0316227, Weighted Scores
+```{r}
+#cp=0.03162278 
+wdbcpred2 <- rpart(diagnosis~.,data=wdbcTest,control=list(cp
+=0.03162278), parms = list( loss= matrix( c(0,1,10,0), nrow=2)))
+
+table(wdbcTest$diagnosis, predict(wdbcpred2, type = "class"))
+
+```
+
+Sensitivity = `r 83/83`
+Specificity = `r 45/(45+5)`
+Positive-Predictive Value = `r 83/(83+5)`
+Flat Error = `r flatErr(predict(wdbcpred2, type = "class"), wdbcTest$diagnosis)`
+
+The sensitivity is high, but specificity isn't great. Especially considering we added extra weight to this one. The flat error rate is slightly higher than cp = 0.01.
+
+## Problem 4: Random Forest
+### Pre-tune ntree
+```{r}
+#quickly tune ntree
+bseq=100*c(seq(2,10,2),15,20,30,50) ## B from 200 to 5000
+j=length(bseq)
+wdbcBtune=matrix(NA,nrow=dim(wdbcTrain)[1],ncol=j)
+### Running different B's, comparing to largest B's predictions
+system.time({
+for (a in 1:j)
+{
+ set.seed(321)
+ wdbcforB<-randomForest(diagnosis~.,data=wdbcTrain,ntree=bseq[a])
+ wdbcBtune[,a]<-wdbcforB$predicted
+}})
+
+bseq
+wdbcBtune %>% apply(2,flatErr,ref=wdbcBtune[,j]) %>% round(3) #ntree = 2000
+```
+
+```{r}
+ftune <- expand.grid(m=c(2:6,8,10),detail=c(1:4,6,8)) 
+ncore=3
+cl <- makeCluster(ncore, type = "SOCK")
+registerDoParallel(cl)
+system.time(
+tune1results<-foreach(a=1:dim(ftune)[1],.combine='rbind',.packages='randomForest')
+ %dopar% {
+ set.seed(414155) ## why set the seed?
+ tmp <- randomForest(diagnosis~.,data=wdbcTrain,ntree=1500, mtry=ftune$m[a],
+ nodesize=ftune$detail[a])
+ c(flatErr(tmp$predicted,wdbcTrain$diagnosis),weightedScore (tmp$predicted,wdbcTrain$diagnosis))
+ }) 
+stopCluster(cl)
+ftune$flat <- tune1results[,1] 
+ftune$inv <- tune1results[,2]
+
+```
+
+###Part B: Winning Settings - On Training Data
+There is only one winning setting!
+```{r}
+ftune[ftune$flat==min(ftune$flat),]
+ftune[ftune$inv==min(ftune$inv),]
+
+wdbcRF1<-randomForest(diagnosis~.,data=wdbcTrain,ntree=2000,mtry=10,nodesize=1)
+predRF1 <- predict(wdbcRF1,newdata=wdbcTrain)
+
+table(wdbcTrain$diagnosis,predRF1)
+
+```
+
+Sensitivity: `r 82/(82+1)`
+Specificity: `r 48/(48+2)`
+Positive-Predictive Value: `r 82/(82+2)`
+
+ 
+
+###Part C:Variable Importance Plots 
+
+A majority of the features seem to be balanced, with the exception of: perimeterTop3, areaTop3, NconcaveTop3, radiusTop3, Nconcacemean.
+```{r}
+
+varImpPlot(wdbcRF1,pch=19,col=4)
+
+```
+
+###Part D: Predict on the Test Data
+```{r}
+wdbcRF2<-randomForest(diagnosis~.,data=wdbcTrain,ntree=2000,mtry=10,nodesize=1)
+predRF2 <- predict(wdbcRF2,newdata=wdbcTest)
+
+table(wdbcTest$diagnosis,predRF2)
+```
+Sensitivity: `r 82/(82+1)`
+Specificity: `r 48/(48+2)`
+Positve-Predictive Value: `r 82/(82+2)`

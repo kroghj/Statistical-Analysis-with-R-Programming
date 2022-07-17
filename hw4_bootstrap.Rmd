@@ -1,0 +1,140 @@
+---
+title: "StatR 503 HW4"
+author: "Johanna Krogh"
+date: "Due May 22, 2017"
+output: html_document
+---
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+library(e1071)
+library(mosaic)
+library(boot)
+```
+
+##Problem 1: Characterizing Player Heights
+```{r }
+NBA <- read.csv("http://faculty.washington.edu/eliezg/teaching/StatR503/data/NBAcensus.csv")
+
+```
+
+###A. Basic Stats
+Mean = `r mean(NBA$Height)`
+Variance = `r var(NBA$Height)`
+Skewness = `r skewness(NBA$Height)`
+```{r}
+hist(NBA$Height, xlab = "Height in Inches", main = "Histogram of NBA Heights")
+
+```
+
+###B. Skewness Bootstrap
+
+```{r message=FALSE, warning=FALSE}
+
+skew.boot <- function(d, i){
+  skewness(d[i])
+}
+Height.bs <- boot(NBA$Height, skew.boot, R=1000, sim = "ordinary")
+
+Height.CI <- apply(Height.bs$t,2,quantile, p=c(0.025, 0.5, 0.975))
+
+hist(Height.bs$t, xlab="Height Skewness", main="Bootstrap Skewness of Height")
+abline(v=c(Height.CI[1], Height.CI[3]), col = "red" )
+
+```
+
+95% Confidence Interval: (`r Height.CI[1]`, `r Height.CI[3]`)
+
+##Problem 2: Fitting Distributions
+
+###A.Log-Likelihoods
+```{r message=FALSE, warning = FALSE}
+LL.normal <- function(param, x){
+    mu <- param[1]
+  sigma <- param[2]
+  -sum(log(dnorm(x,mu,sigma) ) )
+}
+
+LL.weibull <- function(param, x){
+    lambda <- param[1]
+  beta <- param[2]
+  -sum(log(dweibull(x,lambda,beta) ) )
+}
+
+```
+
+###B. Maximum Likelihood Estimates
+
+#### Fit for normal
+```{r message=FALSE, warning=FALSE}
+p0 <- c(78, 3)
+Like.fitN <- optim(p0, LL.normal, x=NBA$Height)
+Like.fitN$par
+```
+
+#### Fit for Weibull
+```{r}
+p1 <- c(1, 79)
+Like.fitW <- optim(p1, LL.weibull, x=NBA$Height)
+Like.fitW$par
+```
+
+###C. Visualization and model selection
+
+The Weibull distribution curve fits the histogram much better. The shape parameter allows the curve to skew left or right. Our log likelihood function gave us a parameter of shape = 27, modeling the left skew. This makes sense for our data set because we are looking at NBA heights, which will be skewed left compared to the rest of the population.
+
+What criterion is most important for comparing the two models? It's difficult for me to wrap my head around the Weibull parameters. For this dataset I would say the shape of the curve is the most important.
+```{r}
+NBAseq <- seq(69,87, length.out=100) #NBAseq helps space the points out equally
+hist(NBA$Height, xlab="Height in Inches", main="NBA Height", freq=FALSE) 
+
+points(NBAseq,dnorm(NBAseq, mean = 79.119634, sd =3.428596 ), type = "l", col="blue") #plot normal distribution with params
+points(NBAseq, dweibull(NBAseq,27.43594, 80.70287), type ="l", col = "green") #plot weibull distribution with params
+legend("topright", c("Normal", "Weibull"),col=c("blue", "green"), lty=1)
+
+```
+
+###D. Confidence Intervals
+The CI's are very similar. The bootstrap method is slight shifted more positive.
+
+####Hessian for Normal
+```{r message=FALSE, warning=FALSE}
+param.fit.N <- optim(p0, LL.normal, x=NBA$Height, hessian=TRUE)#estimate for Fisher information matrix. Inverse of FI gives covariance for parameters
+Sigma.N <- solve(param.fit.N$hessian)#Sigma used to note variance matrix
+se.N <- sqrt(diag(Sigma.N))
+cbind(hat = param.fit.N$par, CI.low = param.fit.N$par  - 1.96*se.N, CI.high = param.fit.N$par  + 1.96*se.N)
+
+```
+
+####Hessian for Weibull
+```{r message=FALSE, warning=FALSE}
+param.fit.W <- optim(p1, LL.weibull, x=NBA$Height, hessian=TRUE)
+Sigma.W <- solve(param.fit.W$hessian)
+se.W <- sqrt(diag(Sigma.W))
+cbind(hat = param.fit.W$par, CI.low = param.fit.W$par  - 1.96*se.W, CI.high = param.fit.W$par  + 1.96*se.W)
+
+```
+
+####Bootstrap CI Normal
+```{r message=FALSE, warning=FALSE}
+MLE.boot.N <- function(d, i){
+  Like.fitN2 <- optim(p0, LL.normal, x=d[i])  
+  Like.fitN2$par
+}
+Height.MLE.N <- boot(NBA$Height, MLE.boot.N, R=1000, sim = "ordinary")
+
+Height.CI.N <- apply(Height.MLE.N$t,2,quantile, p=c(0.025, 0.975))
+Height.CI.N
+```
+
+####Bootstrap CI Weibull
+```{r message=FALSE, warning=FALSE}
+MLE.boot.W <- function(d, i){
+  Like.fitW2 <- optim(p1, LL.weibull, x=d[i])  
+  Like.fitW2$par
+}
+Height.MLE.W <- boot(NBA$Height, MLE.boot.W, R=1000, sim = "ordinary")
+
+Height.CI.W <- apply(Height.MLE.W$t,2,quantile, p=c(0.025, 0.975))
+Height.CI.N
+```
+

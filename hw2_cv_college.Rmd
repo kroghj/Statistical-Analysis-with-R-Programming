@@ -1,0 +1,223 @@
+---
+title: "Homework 2 503"
+author: "Johanna Krogh"
+date: "Due April 18, 2017"
+output: html_document
+---
+
+## Problem 1 ISLR::College Dataset Pre-Processing
+
+### Part A
+
+I corrected the Grad.Rate and PhD variable so their maximum aren't over 100%, as some points were. There were no negative values for any of the variables. The university Rutgers at New Brunswick has a very high number of Apps and Accepts considering how many students they actually enroll. It isn't clear how this entry was mistyped. The number of Accepts is always great than the Enroll numbers. For Rutgers New Brunswick, a first guess would be that an extra digit was added on to the Apps and Accept variable. This would make the Accept variable less them the Enroll number. It is entirely possible that they Accept over 25k students per year and only enroll 4,500. Perhaps in their Accept number they included the number on the waitlist. I am going to leave these two variables as is, since it isn't clear to me if/how they are incorrect.
+
+```{r message = FALSE, warning = FALSE}
+library(ISLR)
+library(glmnet)
+library(psych)
+library(BMA)
+data("College")
+setwd("~/UW_1/Spring 17")
+college <- College
+
+
+#Clean the data
+college$Grad.Rate[college$Grad.Rate>100]=100
+college$PhD[college$PhD>100]=100
+
+
+```
+
+###Part B
+```{r}
+#save this script to a file
+set.seed(1019)
+
+test150 <- sample(row.names(college[college$Private == "Yes",]), 150, replace = FALSE)
+test50 <- sample(row.names(college[college$Private == "No",]),50, replace = FALSE)
+
+colltest <- rbind(college[test150,], college[test50,])
+
+ix <- which(rownames(college) %in% c(test150, test50)) 
+colltrain<- college[-ix, ]
+
+write.csv(colltest, file= "colltest.csv")
+write.csv(colltrain, file = "colltrain.csv")
+
+```
+
+
+###Part D
+I've decided to just show two pair plots plots. I looked at the correlation between columns 1:9 and 10:17 in a larger pairs plot (too hard on the eyes to include in full) and there are only a couple correlations worth nothing. There is a negative correlation between more Out-of-state tuition and Student/Faculty ratio. There is a positive correlation between more Out-of-state tuition and the percent of alumni's who donate. Those were the only two I found slightly surprising. Unsurprisingly, the higher the percent of new student from a top 10% or 25% of H.S. class, was positively correlated for variable typical I would expect from a university that accepts only the best: Phd, Terminal, S.F. Ratio, perc.alumni.
+
+
+#### First 9 columns, with Grad.Rate added
+Positive correlation with Top10perc, Top25perc, and Outstate. Interestingly, it looks like the more undergrads are part-time (P.Undergrad), the lower the Grad.Rate.
+
+Between variables, there is a positive correlation between Top10perc & Top25perc with Outstate. Schools tend to look outside of state lines for the best and brightest.
+
+```{r}
+pairs.panels(colltrain[,c(1:9,18)], ellipses = FALSE, scale = TRUE)
+```
+
+#### Last 9 columns
+Not surprising but interesting to note for all alumni departments: the percentage of alumni who donate increase with Grad.Rate. 
+A negative correlation between high S.F.Ratio and Grad.Rate. The less individual attention a student receives, the more likely they are to leave?
+A positive correlation between PhD and Grad.Rate. The more educated the faculty are, the higher the prestige of the university and quality of the education.
+```{r}
+pairs.panels(colltrain[,10:18], ellipses = FALSE, scale = TRUE)
+```
+
+### Part E
+```{r}
+#add in new rows
+colltrain$acceptrate <- colltrain$Accept/colltrain$Apps
+colltrain$pct.enrollaccept <- colltrain$Enroll/colltrain$Accept #percentage of students who enroll at the school out of all students who are accepted.
+
+```
+
+### Part F: CV Group Assignment
+```{r}
+collcv <- sample(3, 577, replace = TRUE)
+```
+
+## Problem 2 Lasso to Predict Grad.Rate
+
+### Part A
+```{r}
+
+collmat <- model.matrix(lm(Grad.Rate~.,data=colltrain))
+
+colllass <- cv.glmnet(x=as.matrix(collmat[,-1]),y=colltrain$Grad.Rate, foldid= collcv)
+
+plot(colllass)
+
+```
+
+The two lines are colllass$lambda.min = `r colllass$lambda.min` and colllass$lambda.1se = `r colllass$lambda.1se `
+
+### Part B
+```{r}
+names(colllass)
+bestind <- which(colllass$lambda==colllass$lambda.min) 
+asgoodind <- which(colllass$lambda==colllass$lambda.1se)
+
+rownames(colllass$glmnet.fit$beta)[colllass$glmnet.fit$beta[,bestind]!=0]
+
+rownames(colllass$glmnet.fit$beta)[colllass$glmnet.fit$beta[,asgoodind]!=0]
+
+
+```
+
+### Part C
+```{r}
+colltest$acceptrate <- colltest$Accept/colltest$Apps
+colltest$pct.enrollaccept <- colltest$Enroll/colltest$Accept
+collmat2 <- model.matrix(lm(Grad.Rate~.,data=colltest))
+
+testlambda <- predict.cv.glmnet(colllass, collmat2[,-1], s=colllass$lambda)
+
+```
+
+### Part D
+If we take the log of the lambda values, the curve looks similar to part A. The scale of the MSE is different though. 
+
+```{r}
+collMSE <- apply( (testlambda-colltest$Grad.Rate)^2 , 2, mean)
+
+plot(log(colllass$lambda), collMSE, ylab = "Mean-Squared-Error") #log to make x scale the same as part A
+abline(v=log(colllass$lambda.min))
+abline(v=log(colllass$lambda.1se))
+```
+
+### Part E
+```{r}
+testlambda2 <- predict.cv.glmnet(colllass, collmat2[,-1], s=colllass$lambda.min)
+
+plot(colltest$Grad.Rate, testlambda2, xlab = "Observed Test Data", ylab = "Predicted Test Data", main = "Observed vs Pred. Lambda = 0.114") #observed vs predicted
+
+collMSE <- apply( (testlambda-colltest$Grad.Rate)^2 , 2, mean) #MSE
+collRMSE <- sqrt(collMSE) #RMSE
+collbias <- mean(testlambda2-colltest$Grad.Rate) #Empirical Bias
+collsdE <- sd(testlambda2-colltest$Grad.Rate) #Empirical SD of errors
+
+```
+
+RMSE = `r collRMSE`
+Empirical Bias = `r collbias`
+Empirical SD = `r` collsdE`
+
+### Problem 3 BMA to Predict Grad.Rate
+
+Below is a loop to run through OR = 10:40, calculating the MSE. 
+
+```{r cache=TRUE}
+source("mycv1.r")
+#had to drop :Private from formula call to work
+
+allMSE.bma <- c()
+for (i in 10:40){
+  
+collcv.bma <- mycv1(formula=Grad.Rate~., data=colltrain, modfun=bic.glm, cvgroups=collcv, glm.family=gaussian(link="identity"), OR= i)
+
+collMSE.bma <- mean((collcv.bma-colltrain$Grad.Rate)^2)
+
+allMSE.bma <- c(allMSE.bma, collMSE.bma)
+  
+}
+
+OR <- c(10:40)
+plot(OR, allMSE.bma, ylab="Mean-Squared-Error", main = "BMA Tuning Mean-Squared=Error")
+which.min(allMSE.bma)
+
+```
+
+### Part A cont.
+According to our loop, the best tuning parameter is OR=13.
+
+```{r}
+collcv13 <- mycv1(formula=Grad.Rate~., data=colltrain, modfun=bic.glm, cvgroups=collcv, glm.family=gaussian(link="identity"), OR= 13)
+
+collMSE.trn13 <- mean((collcv13-colltrain$Grad.Rate)^2) #MSE OR=13
+collRMSE.trn13 <- sqrt(collMSE.trn13) #RMSE
+collbias.trn13 <- mean(collcv13-colltrain$Grad.Rate) #Empirical Bias
+collsdE.trn13 <- sd(collcv13-colltrain$Grad.Rate) #Empirical SD of errors
+
+plot(colltrain$Grad.Rate, collcv13, xlab="Observed Grad.Rate", ylab="Predicted Grad.Rate", main="College Training Data") #observed vs predicted
+
+```
+
+RMSE = `r collRMSE.trn13`
+Empirical Bias = `r collbias.trn13`
+Empirical SD = `r collsdE.trn13`
+ 
+ 
+### Part B 
+```{r}
+
+collbic.mod<- bic.glm(f=Grad.Rate~., data=colltrain, glm.family=gaussian(link="identity"), OR=13)
+
+summary(collbic.mod)
+
+
+```
+
+
+### Part C
+```{r}
+collbic.tst <- predict(collbic.mod, colltest)
+plot(colltest$Grad.Rate, collbic.tst, xlab="Observed Grad.Rate", ylab="Predicted Grad.Rate", main="College Test Data") #observed vs predicted
+
+```
+
+```{r}
+collMSE.tst <- mean((collbic.tst-colltest$Grad.Rate)^2)#MSE
+collRMSE.tst <- sqrt(collMSE.tst) #RMSE
+collbias.tst <- mean(collbic.tst-colltest$Grad.Rate) #Empirical Bias
+collsdE.tst <- sd(collbic.tst-colltest$Grad.Rate) #Empirical SD of errors
+
+```
+
+RMSE = `r collRMSE.tst`
+Empirical Bias = `r collbias.tst`
+Empirical SD = `r collsdE.tst`
